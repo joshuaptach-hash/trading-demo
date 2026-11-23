@@ -32,6 +32,7 @@ KLASSEN = {
     "aktie": {"name": "Aktien", "hebel": 5, "trend": 0.8, "dip": 0.3, "stop_loss": 0.5, "take_profit": 1.0, "haltedauer_min": 180},
     "etf": {"name": "ETFs", "hebel": 5, "trend": 0.4, "dip": 0.15, "stop_loss": 0.3, "take_profit": 0.6, "haltedauer_min": 180},
 }
+MEINE = set()  # Symbole aus meine_werte.json
 REGELN = {"startkapital": 1000.0, "einsatz": 150.0, "max_positionen": 4, "pause_nach_schliessen_min": 30,
           "gebuehr": 1.0, "schluss_vor_boersenende_min": 10, "klassen": KLASSEN}
 
@@ -42,6 +43,27 @@ def holen(url):
         return json.loads(r.read())
 
 
+def meine_werte_laden(pfad):
+    """Gespeicherte Werte (Suche auf der Seite) zusätzlich handeln."""
+    try:
+        liste = json.loads(Path(pfad).read_text())
+    except Exception:
+        return []
+    neu = []
+    for e in liste[:40]:
+        s, typ = e.get("symbol", ""), e.get("typ", "")
+        if typ in KLASSEN and s:
+            if s not in WERTE:
+                WERTE[s] = (e.get("name") or s, typ)
+            MEINE.add(s)
+            neu.append(s)
+    return neu
+
+
+def eurusd():
+    return float(holen("https://query1.finance.yahoo.com/v8/finance/chart/EURUSD=X?interval=1d&range=5d")["chart"]["result"][0]["meta"]["regularMarketPrice"])
+
+
 def krypto(s, jetzt):
     api = f"https://api.exchange.coinbase.com/products/{s}-EUR"
     k = sorted(holen(f"{api}/candles?granularity=60"), key=lambda x: x[0])  # [t, low, high, open, close, vol]
@@ -50,11 +72,25 @@ def krypto(s, jetzt):
     return {"preis": preis, "ref": ref, "offen": True, "kerzen": [[int(x[0]), float(x[1]), float(x[2]), float(x[4])] for x in k]}
 
 
+FX = {}
+
+
 def boerse(s, jetzt):
     d = holen(f"https://query1.finance.yahoo.com/v8/finance/chart/{s}?interval=1m&range=1d")["chart"]["result"][0]
     m, q = d["meta"], d["indicators"]["quote"][0]
-    kerzen = [[int(t), float(lo), float(hi), float(c)] for t, lo, hi, c in zip(d.get("timestamp", []), q["low"], q["high"], q["close"])
+    w = m.get("currency", "EUR")
+    if w == "EUR":
+        f = 1.0
+    elif w == "USD":
+        if "USD" not in FX:
+            FX["USD"] = eurusd()
+        f = 1 / FX["USD"]
+    else:
+        raise ValueError(f"Währung {w} wird nicht unterstützt")
+    kerzen = [[int(t), float(lo) * f, float(hi) * f, float(c) * f] for t, lo, hi, c in zip(d.get("timestamp", []), q["low"], q["high"], q["close"])
               if c is not None and lo is not None and hi is not None]
+    m["regularMarketPrice"] = float(m["regularMarketPrice"]) * f
+    m["chartPreviousClose"] = float(m["chartPreviousClose"]) * f
     per = m["currentTradingPeriod"]["regular"]
     jetzt_s = jetzt // 1000
     return {"preis": float(m["regularMarketPrice"]), "ref": float(m["chartPreviousClose"]), "kerzen": kerzen,
@@ -101,7 +137,7 @@ def liq_preis(p):
 
 
 def name(s):
-    return WERTE[s][0]
+    return WERTE[s][0] if s in WERTE else s
 
 
 def schliessen(st, p, preis, grund, ts, betrag=None):
@@ -186,7 +222,7 @@ def eroeffnen(st, m, jetzt):
     d = m[s]
     k = KLASSEN[d["klasse"]]
     preis, h = d["preis"], k["hebel"]
-    p = {"s": s, "short": short, "hebel": h, "einsatz": R["einsatz"], "kurs": preis, "menge": R["einsatz"] * h / preis, "ts": jetzt,
+    p = {"s": s, "name": name(s), "klasse": d["klasse"], "meine": s in MEINE, "short": short, "hebel": h, "einsatz": R["einsatz"], "kurs": preis, "menge": R["einsatz"] * h / preis, "ts": jetzt,
          "sl": preis * (1 + k["stop_loss"] / 100 if short else 1 - k["stop_loss"] / 100),
          "tp": preis * (1 - k["take_profit"] / 100 if short else 1 + k["take_profit"] / 100)}
     p["liq"] = liq_preis(p)
@@ -210,6 +246,10 @@ def main():
               "zuletzt_geschlossen": {}, "beginn": jetzt, "laeufe": 0}
     if not isinstance(st.get("geprueft_bis"), dict):
         st["geprueft_bis"] = {}
+    meine_werte_laden(sys.argv[2] if len(sys.argv) > 2 else "meine_werte.json")
+    for p in st["positionen"]:  # offene Positionen weiter verfolgen, auch wenn der Wert entfernt wurde
+        if p["s"] not in WERTE:
+            WERTE[p["s"]] = (p.get("name", p["s"]), p.get("klasse", "aktie"))
     m, fehler = marktdaten(jetzt)
     meld = pruefen(st, m, jetzt)
     info = eroeffnen(st, m, jetzt)
@@ -221,7 +261,8 @@ def main():
     st["aktualisiert"] = jetzt
     st["notiz"] = " ".join(meld + [info])
     st["regeln"] = REGELN
-    st["werte"] = {s: {"name": n, "klasse": k} for s, (n, k) in WERTE.items()}
+    st["werte"] = {s: {"name": n, "klasse": k, "meine": s in MEINE} for s, (n, k) in WERTE.items()}
+    st["eurusd"] = FX.get("USD")
     alt = st.get("markt", {})
     st["markt"] = {**alt, **{s: {"preis": d["preis"], "tag": round(d["tag"], 3), "h1": round(d["h1"], 3), "offen": d["offen"],
                                  "stand": d.get("stand", jetzt // 1000), "kurve": [round(x[3], 6) for x in d["kerzen"] if x[0] >= d["kerzen"][-1][0] - 3600][-60:]}
