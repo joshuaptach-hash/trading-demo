@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
-<title>Krypto-Demo live</title>
+<title>Trading-Demo live</title>
 <style>
 :root{
   --bg:#000;--s1:#121214;--s2:#1d1d20;--line:#242427;--ink:#fff;--ink2:#c8c8cc;--mute:#8a8a90;
@@ -64,6 +64,11 @@ h2 small{color:var(--mute);font-size:13px;font-weight:500;margin-left:6px}
 .spark{flex:none;width:60px;height:26px}
 .flash-up{animation:fu .9s}.flash-down{animation:fd .9s}
 @keyframes fu{0%{color:var(--up)}}@keyframes fd{0%{color:var(--down)}}
+.chips{display:flex;gap:8px;margin:28px 0 4px;overflow-x:auto}
+.chips button{flex:none;padding:8px 16px;border-radius:99px;background:var(--s1);font-size:15px;font-weight:700;color:var(--ink2)}
+.chips button.on{background:var(--ink);color:var(--bg)}
+.markt-info{color:var(--mute);font-size:13px;margin:8px 0 2px;display:flex;align-items:center;gap:7px}
+.markt-info i{width:7px;height:7px;border-radius:50%;background:var(--mute)}.markt-info i.auf{background:var(--up)}
 .empty{color:var(--mute);font-size:14px;padding:14px 0}
 .regeln{background:var(--s1);border-radius:16px;padding:6px 14px;margin-top:8px}
 .regeln p{margin:10px 0;font-size:14px;color:var(--ink2)}.regeln p+p{border-top:1px solid var(--line);padding-top:10px}
@@ -73,7 +78,7 @@ h2 small{color:var(--mute);font-size:13px;font-weight:500;margin-left:6px}
 </head>
 <body>
 <div class="app">
-  <div class="top"><b>Krypto-Demo</b><span class="status" id="status"><i></i><span>lädt …</span></span></div>
+  <div class="top"><b>Trading-Demo</b><span class="status" id="status"><i></i><span>lädt …</span></span></div>
   <div class="lbl">Demo-Depot · Spielgeld</div>
   <div class="big" id="wert">–</div>
   <div class="chg" id="chg"></div>
@@ -83,17 +88,22 @@ h2 small{color:var(--mute);font-size:13px;font-weight:500;margin-left:6px}
   <div class="cards" id="cards"></div>
   <h2>Offene Positionen</h2>
   <div id="pos"></div>
-  <h2>Kurse<small>live · letzte Stunde</small></h2>
+  <div class="chips" id="tabs"><button data-k="krypto" class="on">Krypto</button><button data-k="aktie">Aktien</button><button data-k="etf">ETFs</button></div>
+  <div class="markt-info" id="markt-info"></div>
   <div id="kurse"></div>
   <h2>Aktivität</h2>
   <div id="trades"></div>
   <h2>So handelt der Bot</h2>
   <div class="regeln" id="regeln"></div>
-  <p class="foot">Nur Spielgeld, kein echter Handel und keine Anlageempfehlung.<br>Der Bot läuft etwa alle 5 Minuten auf GitHub, die Kurse auf dieser Seite sind live (Coinbase, EUR).</p>
+  <p class="foot">Nur Spielgeld, kein echter Handel und keine Anlageempfehlung.<br>Der Bot läuft etwa alle 5 Minuten auf GitHub. Krypto-Kurse sind live (Coinbase), Aktien und ETFs kommen von Xetra über Yahoo und werden mit jedem Lauf des Bots aktualisiert, teils verzögert.</p>
 </div>
 <script>
 const NAMEN = {BTC: "Bitcoin", ETH: "Ethereum", SOL: "Solana", XRP: "XRP", DOGE: "Dogecoin"};
 const FARBE = {BTC: 35, ETH: 230, SOL: 280, XRP: 200, DOGE: 45};
+const nm = s => ST?.werte?.[s]?.name || NAMEN[s] || s;
+const kl = s => ST?.werte?.[s]?.klasse || (NAMEN[s] ? "krypto" : "aktie");
+const kurz = s => s.replace(/\.DE$/, "");
+let tab = "krypto";
 const lokal = ["localhost", "127.0.0.1"].includes(location.hostname);
 const owner = location.hostname.split(".")[0], repo = location.pathname.split("/")[1] || "krypto-demo";
 const STAND_URL = lokal ? "state.json" : `https://raw.githubusercontent.com/${owner}/${repo}/daten/state.json`;
@@ -106,14 +116,16 @@ const pf = n => n >= 0 ? "▲" : "▼";
 const ud = n => n >= -0.005 ? "up" : "down";
 const uhr = ts => new Date(ts).toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit"});
 const tagUhr = ts => {const d = new Date(ts), h = new Date(); return d.toDateString() === h.toDateString() ? uhr(ts) : d.toLocaleDateString("de-DE", {day: "2-digit", month: "2-digit"}) + " " + uhr(ts);};
-const ava = s => `<span class="ava" style="background:hsl(${FARBE[s] ?? 0} 55% 40%)">${esc(s)}</span>`;
+const hue = s => FARBE[s] ?? [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+const ava = s => `<span class="ava" style="background:hsl(${hue(s)} 45% ${kl(s) === "etf" ? 30 : 38}%)">${esc(kurz(s).slice(0, 4))}</span>`;
 const card = (l, v, c = "") => `<div class="card"><span>${esc(l)}</span><b class="${c}">${v}</b></div>`;
 const zahl = n => n.toLocaleString("de-DE", {maximumFractionDigits: 2});
 const badge = (short, h) => `<span class="hb ${short ? "sh" : ""}">${short ? "Short" : "Long"} ${h}x</span>`;
 
 let ST = null, PREIS = {}, KURVE = {}, letzterKurs = 0, rng = 1440, altPreis = {};
 
-function posWert(p){const pr = PREIS[p.s] ?? p.kurs, d = p.menge * pr - p.einsatz * p.hebel; return Math.max(0, p.einsatz + (p.short ? -d : d));}
+const preisVon = s => PREIS[s] ?? ST?.markt?.[s]?.preis;
+function posWert(p){const pr = preisVon(p.s) ?? p.kurs, d = p.menge * pr - p.einsatz * p.hebel; return Math.max(0, p.einsatz + (p.short ? -d : d));}
 
 async function standLaden(){
   try {const r = await fetch(STAND_URL + "?t=" + Date.now(), {cache: "no-store"}); if (r.ok){const j = await r.json(); if (j && j.start) ST = j;}} catch(e) {}
@@ -158,11 +170,15 @@ function status(){
 }
 function render(){
   status();
-  $("kurse").innerHTML = Object.keys(NAMEN).map(s => {const k = KURVE[s], p = PREIS[s] ?? (ST?.markt?.[s]?.preis), h = k && p ? (p / k[0] - 1) * 100 : ST?.markt?.[s]?.h1;
-    const fl = PREIS[s] && altPreis[s] && PREIS[s] !== altPreis[s] ? (PREIS[s] > altPreis[s] ? "flash-up" : "flash-down") : "";
-    const h24 = ST?.markt?.[s]?.h24;
-    return `<div class="row">${ava(s)}<div class="mid"><b>${NAMEN[s]}</b><small>${s}${h24 != null ? ` · 24 Std ${h24 >= 0 ? "+" : "−"}${pct(h24)}` : ""}</small></div>${spark(k)}
-    <div class="right"><b class="${fl}">${p ? kEur(p) : "–"}</b><small class="${h == null ? "" : ud(h)}">${h == null ? "" : `${pf(h)} ${pct(h)}`}</small></div></div>`;}).join("");
+  const liste = tab === "krypto" ? Object.keys(NAMEN) : Object.keys(ST?.werte || {}).filter(s => ST.werte[s].klasse === tab);
+  const offenB = liste.some(s => ST?.markt?.[s]?.offen), standB = Math.max(0, ...liste.map(s => ST?.markt?.[s]?.stand || 0));
+  $("markt-info").innerHTML = tab === "krypto" ? `<i class="auf"></i>Live, rund um die Uhr · Änderung über 24 Std und letzte Stunde`
+    : `<i class="${offenB ? "auf" : ""}"></i>Xetra ${offenB ? "geöffnet" : "geschlossen, handelt Mo–Fr 9:00–17:30"}${standB ? ` · Stand ${tagUhr(standB * 1000)}` : ""} · Änderung heute und letzte Stunde`;
+  $("kurse").innerHTML = liste.map(s => {const live = tab === "krypto", k = live ? KURVE[s] : ST?.markt?.[s]?.kurve, p = preisVon(s),
+    h = live && k && p ? (p / k[0] - 1) * 100 : ST?.markt?.[s]?.h1, tg = ST?.markt?.[s]?.tag ?? ST?.markt?.[s]?.h24;
+    const fl = live && PREIS[s] && altPreis[s] && PREIS[s] !== altPreis[s] ? (PREIS[s] > altPreis[s] ? "flash-up" : "flash-down") : "";
+    return `<div class="row">${ava(s)}<div class="mid"><b>${esc(nm(s))}</b><small>${esc(kurz(s))}${tg != null ? ` · ${live ? "24 Std" : "heute"} ${tg >= 0 ? "+" : "−"}${pct(tg)}` : ""}</small></div>${spark(k)}
+    <div class="right"><b class="${fl}">${p ? kEur(p) : "–"}</b><small class="${h == null ? "" : ud(h)}">${h == null ? "" : `${pf(h)} ${pct(h)}`}</small></div></div>`;}).join("") || `<div class="empty">Kurse werden geladen …</div>`;
   if (!ST){$("notiz").textContent = "Der Bot hat noch keinen Stand gespeichert. Der erste Lauf kommt in wenigen Minuten."; return;}
   const R = ST.regeln, pos = ST.positionen.map(p => ({...p, wert: posWert(p)}));
   const gesamt = ST.bargeld + pos.reduce((a, p) => a + p.wert, 0), g = gesamt - ST.start;
@@ -177,16 +193,18 @@ function render(){
   $("cards").innerHTML = card("Bargeld", eur(ST.bargeld)) + card("Offen in Positionen", `${pf(offen)} ${eur(Math.abs(offen))}`, ud(offen))
     + card("Abgeschlossene Trades", zu.length ? `${zu.length} · ${gew} im Plus` : "0") + card("Gebühren bisher", eur(ST.trades.reduce((a, t) => a + (t.gebuehr || 0), 0)));
   $("pos").innerHTML = pos.map(p => {const g = p.wert - p.einsatz, ab = Math.round((Date.now() - p.ts) / 60000);
-    return `<div class="row">${ava(p.s)}<div class="mid"><b>${NAMEN[p.s]} ${badge(p.short, p.hebel)}</b><small>Einsatz ${eur(p.einsatz)} · Einstieg ${kEur(p.kurs)} · seit ${ab} Min</small>
+    return `<div class="row">${ava(p.s)}<div class="mid"><b>${esc(nm(p.s))} ${badge(p.short, p.hebel)}</b><small>Einsatz ${eur(p.einsatz)} · Einstieg ${kEur(p.kurs)} · seit ${ab} Min</small>
     <div class="ord"><span class="o-sl">Stop-Loss ${kEur(p.sl)}</span><span class="o-tp">Take-Profit ${kEur(p.tp)}</span><span>Liquidation ${kEur(p.liq)}</span></div></div>
     <div class="right"><b class="${ud(g)}">${pf(g)} ${eur(Math.abs(g))}</b><small class="${ud(g)}">${pct(g / p.einsatz * 100)}</small></div></div>`;}).join("") || `<div class="empty">Gerade keine offene Position. Der Bot wartet auf ein passendes Signal.</div>`;
   $("trades").innerHTML = ST.trades.slice(-30).reverse().map(t => {const auf = t.aktion === "Eröffnet";
-    return `<div class="row">${ava(t.s)}<div class="mid"><b>${auf ? "Eröffnet" : "Geschlossen"} ${NAMEN[t.s]} ${badge(t.short, t.hebel)}</b><small>${tagUhr(t.ts)} · ${kEur(t.kurs)} · ${esc(t.grund)}</small></div>
+    return `<div class="row">${ava(t.s)}<div class="mid"><b>${auf ? "Eröffnet" : "Geschlossen"} ${esc(nm(t.s))} ${badge(t.short, t.hebel)}</b><small>${tagUhr(t.ts)} · ${kEur(t.kurs)} · ${esc(t.grund)}</small></div>
     <div class="right">${auf ? `<b>${eur(t.einsatz)}</b><small style="color:var(--mute)">Einsatz</small>` : `<b class="${ud(t.ergebnis)}">${t.ergebnis >= 0 ? "+" : "−"}${eur(Math.abs(t.ergebnis))}</b><small style="color:var(--mute)">Ergebnis</small>`}</div></div>`;}).join("") || `<div class="empty">Noch keine Trades.</div>`;
-  $("regeln").innerHTML = `<p>Startkapital ${eur(R.startkapital)} Spielgeld. Pro Trade ${eur(R.einsatz)} Einsatz mit ${R.hebel}x Hebel, also ${eur(R.einsatz * R.hebel)} im Markt. 1 % Kursbewegung sind ${R.hebel} % auf den Einsatz.</p>
-  <p><b>Long</b>, wenn ein Coin über 24 Stunden mehr als ${zahl(R.trend_24h)} % gestiegen ist und in der letzten Stunde um mindestens ${zahl(R.ruecksetzer_1h)} % nachgegeben hat. <b>Short</b> im umgekehrten Fall.</p>
-  <p>Stop-Loss ${zahl(R.stop_loss)} % vom Einstieg (−${zahl(R.stop_loss * R.hebel)} % auf den Einsatz), Take-Profit ${zahl(R.take_profit)} % (+${zahl(R.take_profit * R.hebel)} %). Spätestens nach ${R.max_haltedauer_min} Minuten wird geschlossen. Höchstens ${R.max_positionen} Positionen gleichzeitig, ${eur(R.gebuehr)} Gebühr pro Order.</p>`;
+  const K = R.klassen || {};
+  $("regeln").innerHTML = `<p>Startkapital ${eur(R.startkapital)} Spielgeld. Pro Trade ${eur(R.einsatz)} Einsatz mit Hebel, höchstens ${R.max_positionen} Positionen gleichzeitig, ${eur(R.gebuehr)} Gebühr pro Order.</p>
+  <p><b>Long</b>, wenn ein Wert im Tagestrend steigt und in der letzten Stunde nachgegeben hat, also ein Rücksetzer im Aufwärtstrend. <b>Short</b> im umgekehrten Fall.</p>`
+  + Object.values(K).map(k => `<p><b>${esc(k.name)}:</b> Hebel ${k.hebel}x, Trend ab ${zahl(k.trend)} %, Rücksetzer ab ${zahl(k.dip)} %. Stop-Loss ${zahl(k.stop_loss)} % (−${zahl(k.stop_loss * k.hebel)} % auf den Einsatz), Take-Profit ${zahl(k.take_profit)} % (+${zahl(k.take_profit * k.hebel)} %), spätestens nach ${k.haltedauer_min} Minuten schließen${k.name === "Krypto" ? "" : ", nur zu Börsenzeiten und vor Börsenschluss"}.</p>`).join("");
 }
+$("tabs").onclick = e => {const b = e.target.closest("[data-k]"); if (!b) return; tab = b.dataset.k; $("tabs").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); render();};
 $("rng").onclick = e => {const b = e.target.closest("[data-r]"); if (!b) return; rng = +b.dataset.r; $("rng").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); render();};
 standLaden(); kurseLaden(); kurvenLaden();
 setInterval(() => {if (!document.hidden) kurseLaden();}, 5000);
