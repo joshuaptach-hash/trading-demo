@@ -91,6 +91,7 @@ h2 small{color:var(--mute);font-size:13px;font-weight:500;margin-left:6px}
 .fakten span{display:block;color:var(--mute);font-size:12px}.fakten b{font-size:14px;word-break:break-all}
 .cta{display:block;width:100%;height:52px;border-radius:14px;font-weight:700;font-size:16px;background:var(--ink);color:var(--bg);margin-top:16px;text-align:center;line-height:52px;text-decoration:none}
 .cta.weg{background:var(--s2);color:var(--down)}
+button.cta{border:0;cursor:pointer;font-family:inherit}button.cta:disabled{opacity:.6}
 .klein{color:var(--mute);font-size:13px;margin-top:10px;line-height:1.5}
 .empty{color:var(--mute);font-size:14px;padding:14px 0}
 .regeln{background:var(--s1);border-radius:16px;padding:6px 14px;margin-top:8px}
@@ -131,6 +132,19 @@ h2 small{color:var(--mute);font-size:13px;font-weight:500;margin-left:6px}
 <script>
 const NAMEN = {BTC: "Bitcoin", ETH: "Ethereum", SOL: "Solana", XRP: "XRP", DOGE: "Dogecoin"};
 const FARBE = {BTC: 35, ETH: 230, SOL: 280, XRP: 200, DOGE: 45};
+const PKEY = "trading-demo-wuensche";
+let WARTET = (() => {try {return JSON.parse(localStorage.getItem(PKEY)) || {};} catch(e) {return {};}})();
+const wartetSpeichern = () => {try {localStorage.setItem(PKEY, JSON.stringify(WARTET));} catch(e) {}};
+function meineMischen(){
+  const jetzt = Date.now();
+  for (const [s, w] of Object.entries(WARTET)){
+    const drin = MEINE_REPO.some(x => x.symbol === s);
+    if ((w.aktion === "hinzufuegen" && drin) || (w.aktion === "entfernen" && !drin) || jetzt - w.ts > 12 * 3600e3) delete WARTET[s];
+  }
+  wartetSpeichern();
+  MEINE = MEINE_REPO.filter(x => WARTET[x.symbol]?.aktion !== "entfernen")
+    .concat(Object.entries(WARTET).filter(([s, w]) => w.aktion === "hinzufuegen").map(([s, w]) => ({...w.eintrag, wartet: true})));
+}
 const meinEintrag = s => MEINE.find(x => x.symbol === s);
 const nm = s => ST?.werte?.[s]?.name || meinEintrag(s)?.name || NAMEN[s] || s;
 const kl = s => ST?.werte?.[s]?.klasse || meinEintrag(s)?.typ || (NAMEN[s] ? "krypto" : "aktie");
@@ -140,6 +154,7 @@ const kurz = s => s.replace(/\.DE$/, "");
 let tab = "krypto";
 const lokal = ["localhost", "127.0.0.1"].includes(location.hostname);
 const owner = lokal ? "joshuaptach-hash" : location.hostname.split(".")[0], repo = lokal ? "krypto-demo" : (location.pathname.split("/")[1] || "krypto-demo");
+const KANAL = "trading-demo-2851473014d96c49";  // Briefkasten für Speicher-Wünsche (ntfy.sh), der Bot holt sie alle 5 Minuten ab
 const MEINE_URL = lokal ? "meine_werte.json" : `https://raw.githubusercontent.com/${owner}/${repo}/main/meine_werte.json`;
 const STAND_URL = lokal ? "state.json" : `https://raw.githubusercontent.com/${owner}/${repo}/daten/state.json`;
 const $ = id => document.getElementById(id);
@@ -157,7 +172,7 @@ const card = (l, v, c = "") => `<div class="card"><span>${esc(l)}</span><b class
 const zahl = n => n.toLocaleString("de-DE", {maximumFractionDigits: 2});
 const badge = (short, h) => `<span class="hb ${short ? "sh" : ""}">${short ? "Short" : "Long"} ${h}x</span>`;
 
-let MEINE = [], UNI = null, KRYPTO_UNI = null, suchTyp = "";
+let MEINE_REPO = [], MEINE = [], UNI = null, KRYPTO_UNI = null, suchTyp = "";
 let ST = null, PREIS = {}, KURVE = {}, letzterKurs = 0, rng = 1440, altPreis = {};
 
 const preisVon = s => PREIS[s] ?? ST?.markt?.[s]?.preis;
@@ -213,8 +228,8 @@ function render(){
   $("kurse").innerHTML = liste.map(s => {const live = kl(s) === "krypto", k = live ? KURVE[s] : ST?.markt?.[s]?.kurve, p = preisVon(s),
     h = live && k && p ? (p / k[0] - 1) * 100 : ST?.markt?.[s]?.h1, tg = ST?.markt?.[s]?.tag ?? ST?.markt?.[s]?.h24;
     const fl = live && PREIS[s] && altPreis[s] && PREIS[s] !== altPreis[s] ? (PREIS[s] > altPreis[s] ? "flash-up" : "flash-down") : "";
-    return `<div class="row" data-open="${esc(s)}">${ava(s)}<div class="mid"><b>${esc(nm(s))}${istMein(s) ? '<span class="stern">★</span>' : ""}</b><small>${esc(kurz(s))}${tg != null ? ` · ${live ? "24 Std" : "heute"} ${tg >= 0 ? "+" : "−"}${pct(tg)}` : ""}</small></div>${spark(k)}
-    <div class="right"><b class="${fl}">${p ? kEur(p) : tab === "meine" ? '<span style="color:var(--mute);font-weight:500;font-size:13px">ab nächstem Lauf</span>' : "–"}</b><small class="${h == null ? "" : ud(h)}">${h == null ? "" : `${pf(h)} ${pct(h)}`}</small></div></div>`;}).join("") || `<div class="empty">Kurse werden geladen …</div>`;
+    return `<div class="row" data-open="${esc(s)}">${ava(s)}<div class="mid"><b>${esc(nm(s))}${istMein(s) ? '<span class="stern">★</span>' : ""}</b><small>${meinEintrag(s)?.wartet ? '<span style="color:var(--up)">wird übernommen</span> · ' : ""}${esc(kurz(s))}${tg != null ? ` · ${live ? "24 Std" : "heute"} ${tg >= 0 ? "+" : "−"}${pct(tg)}` : ""}</small></div>${spark(k)}
+    <div class="right"><b class="${fl}">${p ? kEur(p) : tab === "meine" ? '<span style="color:var(--mute);font-weight:500;font-size:13px">Kurs ab nächstem Lauf</span>' : "–"}</b><small class="${h == null ? "" : ud(h)}">${h == null ? "" : `${pf(h)} ${pct(h)}`}</small></div></div>`;}).join("") || `<div class="empty">Kurse werden geladen …</div>`;
   if (!ST){$("notiz").textContent = "Der Bot hat noch keinen Stand gespeichert. Der erste Lauf kommt in wenigen Minuten."; return;}
   const R = ST.regeln, pos = ST.positionen.map(p => ({...p, wert: posWert(p)}));
   const gesamt = ST.bargeld + pos.reduce((a, p) => a + p.wert, 0), g = gesamt - ST.start;
@@ -241,7 +256,8 @@ function render(){
   + Object.values(K).map(k => `<p><b>${esc(k.name)}:</b> Hebel ${k.hebel}x, Trend ab ${zahl(k.trend)} %, Rücksetzer ab ${zahl(k.dip)} %. Stop-Loss ${zahl(k.stop_loss)} % (−${zahl(k.stop_loss * k.hebel)} % auf den Einsatz), Take-Profit ${zahl(k.take_profit)} % (+${zahl(k.take_profit * k.hebel)} %), spätestens nach ${k.haltedauer_min} Minuten schließen${k.name === "Krypto" ? "" : ", nur zu Börsenzeiten und vor Börsenschluss"}.</p>`).join("");
 }
 async function meineLaden(){
-  try {const r = await fetch(MEINE_URL + "?t=" + Date.now(), {cache: "no-store"}); if (r.ok) MEINE = await r.json();} catch(e) {}
+  try {const r = await fetch(MEINE_URL + "?t=" + Date.now(), {cache: "no-store"}); if (r.ok) MEINE_REPO = await r.json();} catch(e) {}
+  meineMischen();
   render(); if (offen) blatt(offen);
 }
 async function universumLaden(){
@@ -279,19 +295,31 @@ function blatt(s){
   const [sym, name, typ, boerse, isin] = u, mein = istMein(sym), m = ST?.markt?.[sym], p = PREIS[sym] ?? m?.preis;
   const K = ST?.regeln?.klassen?.[typ];
   const pos = ST?.positionen?.find(x => x.s === sym);
-  const eintrag = JSON.stringify({aktion: mein ? "entfernen" : "hinzufuegen", symbol: sym, name, typ, boerse});
-  const titel = `Bot-Liste: ${sym} ${mein ? "entfernen" : "hinzufügen"}`;
-  const link = `https://github.com/${owner}/${repo}/issues/new?title=${encodeURIComponent(titel)}&body=${encodeURIComponent("Automatischer Eintrag von der Trading-Demo, bitte nicht ändern:\n\n" + eintrag)}`;
+  const wartet = WARTET[sym];
   $("blatt-in").innerHTML = `<div class="grab"></div><div style="display:flex;gap:14px;align-items:center">${ava(sym)}<div class="mid"><b style="font-size:18px">${esc(name)}${mein ? '<span class="stern">★</span>' : ""}</b><small>${esc(kurz(sym))} · ${esc(boerse)} · ${TYP[typ] || ""}</small></div></div>
   <div class="big" style="margin-top:14px">${p ? kEur(p) : "–"}</div>
   <div class="chg">${m?.tag != null ? `<span class="${ud(m.tag)}">${pf(m.tag)} ${pct(m.tag)}</span><small>${typ === "krypto" ? "24 Std" : "heute"}</small>` : `<small>${typ === "krypto" ? "Live-Kurs von Coinbase" : "Kurs erscheint, sobald der Bot den Wert beobachtet"}</small>`}</div>
   ${pos ? `<div class="klein">Der Bot hat hier gerade eine offene Position: ${pos.short ? "Short" : "Long"} ${pos.hebel}x, Einsatz ${eur(pos.einsatz)}.</div>` : ""}
   <div class="fakten"><div><span>Kürzel</span><b>${esc(sym)}</b></div><div><span>Handelsplatz</span><b>${esc(boerse)}</b></div>${isin ? `<div><span>ISIN</span><b>${esc(isin)}</b></div>` : ""}<div><span>Bot-Regel</span><b>${K ? `${K.hebel}x, SL ${zahl(K.stop_loss)} %, TP ${zahl(K.take_profit)} %` : "–"}</b></div></div>
-  <a class="cta ${mein ? "weg" : ""}" href="${link}" target="_blank" rel="noopener">${mein ? "Aus der Bot-Liste entfernen" : "★ Für den Bot speichern"}</a>
-  <p class="klein">${mein ? "Öffnet GitHub mit einem fertigen Eintrag. Dort auf „Create“ tippen. Offene Positionen schließt der Bot weiter nach seinen Regeln."
-    : `Öffnet GitHub mit einem fertigen Eintrag. Dort auf „Create“ tippen. Nach etwa einer Minute steht der Wert unter „★ Meine“ und der Bot handelt ihn ab seinem nächsten Lauf mit${typ === "krypto" ? "" : ", zu Börsenzeiten"}. Speichern kann nur der Besitzer des Projekts.`}</p>`;
+  <button class="cta ${mein ? "weg" : ""}" id="merk-btn">${mein ? "Aus der Bot-Liste entfernen" : "★ Für den Bot speichern"}</button>
+  <p class="klein" id="merk-info">${wartet ? `${wartet.aktion === "hinzufuegen" ? "Gespeichert" : "Entfernt"}. Der Bot übernimmt das bei seinem nächsten Lauf, meist innerhalb von 5 Minuten.`
+    : mein ? "Offene Positionen schließt der Bot weiter nach seinen Regeln."
+    : `Der Bot handelt den Wert ab seinem nächsten Lauf mit${typ === "krypto" ? "" : ", zu den Börsenzeiten"}. Höchstens 40 eigene Werte.`}</p>`;
+  $("merk-btn").onclick = () => merken(sym, mein ? "entfernen" : "hinzufuegen", {symbol: sym, name, typ, boerse});
   $("blatt").classList.add("on"); $("dim").classList.add("on");
   if (typ === "krypto" && !PREIS[sym]) fetch(`https://api.exchange.coinbase.com/products/${sym}-EUR/ticker`).then(r => r.json()).then(j => {if (j.price){PREIS[sym] = +j.price; if (offen === sym) blatt(sym);}}).catch(() => {});
+}
+async function merken(sym, aktion, eintrag){
+  const btn = $("merk-btn"); btn.disabled = true; btn.textContent = "Wird gespeichert …";
+  try {
+    const r = await fetch(`https://ntfy.sh/${KANAL}`, {method: "POST", body: JSON.stringify({aktion, ...eintrag})});
+    if (!r.ok) throw new Error(r.status);
+    WARTET[sym] = {aktion, ts: Date.now(), eintrag}; wartetSpeichern(); meineMischen();
+    render(); blatt(sym);
+  } catch(e) {
+    btn.disabled = false; btn.textContent = "Nochmal versuchen";
+    $("merk-info").textContent = "Speichern hat nicht geklappt. Bitte Internetverbindung prüfen und nochmal tippen.";
+  }
 }
 function zu(){offen = null; $("blatt").classList.remove("on"); $("dim").classList.remove("on");}
 function sucheAuf(){$("ueber").classList.add("on"); $("such-q").focus(); universumLaden();}
