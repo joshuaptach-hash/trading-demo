@@ -1,0 +1,48 @@
+name: Meine Werte
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: meine-werte
+  cancel-in-progress: false
+
+jobs:
+  speichern:
+    # Nur der Besitzer des Repos darf die Liste ändern
+    if: github.event.issue.author_association == 'OWNER' && startsWith(github.event.issue.title, 'Bot-Liste:')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Eintrag übernehmen
+        id: eintrag
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          echo "text<<ENDE" >> "$GITHUB_OUTPUT"
+          python3 werkzeuge/meine_werte.py >> "$GITHUB_OUTPUT"
+          echo "ENDE" >> "$GITHUB_OUTPUT"
+
+      - name: Speichern
+        run: |
+          git config user.name "krypto-demo-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add meine_werte.json
+          git diff --cached --quiet || git commit -q -m "Meine Werte aktualisiert"
+          git push -q
+
+      - name: Antworten und schließen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TEXT: ${{ steps.eintrag.outputs.text }}
+          NUMMER: ${{ github.event.issue.number }}
+        run: |
+          gh issue comment "$NUMMER" --repo "$GITHUB_REPOSITORY" --body "$TEXT"
+          gh issue close "$NUMMER" --repo "$GITHUB_REPOSITORY"
