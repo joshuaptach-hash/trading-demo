@@ -1,0 +1,59 @@
+name: Trading-Demo-Bot
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bot
+  cancel-in-progress: false
+
+jobs:
+  lauf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Speicher-Wünsche aus der App übernehmen
+        id: wunsch
+        run: python werkzeuge/wuensche.py
+
+      - name: Meine Werte in GitHub speichern
+        if: steps.wunsch.outputs.geaendert == '1'
+        run: |
+          git config user.name "trading-demo-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add meine_werte.json
+          git commit -q -m "Meine Werte aus der App übernommen"
+          git pull -q --rebase origin main
+          git push -q
+
+      - name: Letzten Stand holen
+        run: |
+          if git fetch --depth=1 origin daten 2>/dev/null; then
+            git show origin/daten:state.json > state.json
+          else
+            echo "{}" > state.json
+          fi
+
+      - name: Bot ausführen
+        run: python bot/bot.py state.json meine_werte.json
+
+      - name: Stand speichern (Branch daten)
+        run: |
+          mkdir aus && cp state.json aus/ && cd aus
+          git init -q -b daten
+          git config user.name "trading-demo-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git commit -q -m "Stand $(date -u +%Y-%m-%dT%H:%M)"
+          git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" daten
