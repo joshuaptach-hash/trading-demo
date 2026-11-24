@@ -93,6 +93,15 @@ h2 small{color:var(--mute);font-size:13px;font-weight:500;margin-left:6px}
 .cta.weg{background:var(--s2);color:var(--down)}
 button.cta{border:0;cursor:pointer;font-family:inherit}button.cta:disabled{opacity:.6}
 .klein{color:var(--mute);font-size:13px;margin-top:10px;line-height:1.5}
+.stimmung{display:flex;gap:12px;align-items:center;background:var(--s1);border-radius:16px;padding:12px 14px;margin:8px 0}
+.stimmung .ring{flex:none;width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:13px}
+.stimmung p{margin:0;font-size:14px;color:var(--ink2)}.stimmung b{display:block;color:var(--ink);font-size:14px}
+.sig{display:inline-block;min-width:54px;text-align:center;font-size:12px;font-weight:700;border-radius:8px;padding:3px 7px}
+.sig.p{background:var(--up-bg);color:var(--up)}.sig.n{background:var(--down-bg);color:var(--down)}.sig.o{background:var(--s2);color:var(--ink2)}
+.meld{display:block;padding:10px 0;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
+.meld small{display:block;color:var(--mute);font-size:12px;margin-bottom:2px}
+.meld span{font-size:14px;line-height:1.4}
+.mehr{color:var(--mute);font-size:13px;font-weight:600;padding:10px 0}
 .empty{color:var(--mute);font-size:14px;padding:14px 0}
 .regeln{background:var(--s1);border-radius:16px;padding:6px 14px;margin-top:8px}
 .regeln p{margin:10px 0;font-size:14px;color:var(--ink2)}.regeln p+p{border-top:1px solid var(--line);padding-top:10px}
@@ -116,6 +125,10 @@ button.cta{border:0;cursor:pointer;font-family:inherit}button.cta:disabled{opaci
   <div class="chips" id="tabs"><button data-k="meine">★ Meine</button><button data-k="krypto" class="on">Krypto</button><button data-k="aktie">Aktien</button><button data-k="etf">ETFs</button></div>
   <div class="markt-info" id="markt-info"></div>
   <div id="kurse"></div>
+  <h2>Nachrichten<small id="news-stand"></small></h2>
+  <div class="stimmung" id="stimmung"></div>
+  <div id="news-signale"></div>
+  <div id="news-liste"></div>
   <h2>Aktivität</h2>
   <div id="trades"></div>
   <h2>So handelt der Bot</h2>
@@ -251,8 +264,10 @@ function render(){
     return `<div class="row">${ava(t.s)}<div class="mid"><b>${auf ? "Eröffnet" : "Geschlossen"} ${esc(nm(t.s))} ${badge(t.short, t.hebel)}</b><small>${tagUhr(t.ts)} · ${kEur(t.kurs)} · ${esc(t.grund)}</small></div>
     <div class="right">${auf ? `<b>${eur(t.einsatz)}</b><small style="color:var(--mute)">Einsatz</small>` : `<b class="${ud(t.ergebnis)}">${t.ergebnis >= 0 ? "+" : "−"}${eur(Math.abs(t.ergebnis))}</b><small style="color:var(--mute)">Ergebnis</small>`}</div></div>`;}).join("") || `<div class="empty">Noch keine Trades.</div>`;
   const K = R.klassen || {};
+  renderNews();
   $("regeln").innerHTML = `<p>Startkapital ${eur(R.startkapital)} Spielgeld. Pro Trade ${eur(R.einsatz)} Einsatz mit Hebel, höchstens ${R.max_positionen} Positionen gleichzeitig, ${eur(R.gebuehr)} Gebühr pro Order.</p>
-  <p><b>Long</b>, wenn ein Wert im Tagestrend steigt und in der letzten Stunde nachgegeben hat, also ein Rücksetzer im Aufwärtstrend. <b>Short</b> im umgekehrten Fall.</p>`
+  <p><b>Nachrichten:</b> Der Bot liest Welt-, Wirtschafts- und Kryptonews (BBC, Tagesschau, CNBC, CoinDesk) und Meldungen zu jedem Wert (Yahoo Finance). Eine KI bewertet, welche Werte davon betroffen sind. Ist eine Meldung klar positiv oder negativ (ab ±0,5 bei mindestens 60 % Sicherheit), eröffnet der Bot sofort Long oder Short. Gegen eine klare Nachrichtenlage handelt er nicht, und bei stark gegenläufigen News schließt er offene Positionen.</p>
+  <p><b>Kurs-Regel:</b> Long, wenn ein Wert im Tagestrend steigt und in der letzten Stunde nachgegeben hat, also ein Rücksetzer im Aufwärtstrend. <b>Short</b> im umgekehrten Fall.</p>`
   + Object.values(K).map(k => `<p><b>${esc(k.name)}:</b> Hebel ${k.hebel}x, Trend ab ${zahl(k.trend)} %, Rücksetzer ab ${zahl(k.dip)} %. Stop-Loss ${zahl(k.stop_loss)} % (−${zahl(k.stop_loss * k.hebel)} % auf den Einsatz), Take-Profit ${zahl(k.take_profit)} % (+${zahl(k.take_profit * k.hebel)} %), spätestens nach ${k.haltedauer_min} Minuten schließen${k.name === "Krypto" ? "" : ", nur zu Börsenzeiten und vor Börsenschluss"}.</p>`).join("");
 }
 async function meineLaden(){
@@ -334,6 +349,23 @@ document.addEventListener("click", e => {
   if (w){const s = w.dataset.wahl; WAHL[s] = (KRYPTO_UNI || []).concat(UNI || []).find(x => x[0] === s); blatt(s);}
   else if (o && !e.target.closest(".blatt")) blatt(o.dataset.open);
 });
+let newsAlle = false;
+function renderNews(){
+  const N = ST?.news;
+  if (!N){$("stimmung").innerHTML = '<p class="empty">Der Bot liest ab seinem nächsten Lauf Nachrichten.</p>'; return;}
+  $("news-stand").textContent = N.bewertet ? `bewertet ${tagUhr(N.bewertet)} · ${N.quelle || ""}` : "";
+  const sm = +N.stimmung || 0, farbe = sm > 0.15 ? "var(--up)" : sm < -0.15 ? "var(--down)" : "var(--mute)";
+  $("stimmung").innerHTML = `<span class="ring" style="border:3px solid ${farbe};color:${farbe}">${sm > 0 ? "+" : ""}${zahl(sm)}</span><div><b>Marktstimmung ${sm > 0.15 ? "positiv" : sm < -0.15 ? "negativ" : "neutral"}</b><p>${esc(N.stimmung_grund || "Noch keine Einschätzung.")}</p></div>`;
+  const sig = Object.entries(N.signale || {}).sort((a, b) => Math.abs(b[1].score) - Math.abs(a[1].score));
+  $("news-signale").innerHTML = sig.length ? sig.map(([s, v]) => {const c = v.score >= 0.15 ? "p" : v.score <= -0.15 ? "n" : "o", handelt = Math.abs(v.score) >= 0.5 && v.sicherheit >= 0.6;
+    return `<div class="row" data-open="${esc(s)}">${ava(s)}<div class="mid"><b>${esc(nm(s))}</b><small style="white-space:normal">${esc(v.grund)}</small>${handelt ? '<small style="color:var(--ink2);font-weight:600">Stark genug für einen News-Trade</small>' : ""}</div><div class="right"><span class="sig ${c}">${v.score > 0 ? "+" : ""}${zahl(v.score)}</span><small style="color:var(--mute);font-weight:500">${Math.round(v.sicherheit * 100)} % sicher</small></div></div>`;}).join("")
+    : '<p class="empty">Gerade keine Meldung, die einen der beobachteten Werte klar bewegt.</p>';
+  const ml = N.meldungen || [], zeig = newsAlle ? ml : ml.slice(0, 6);
+  $("news-liste").innerHTML = zeig.map(m => {const inner = `<small>${esc(m.quelle)} · ${tagUhr(m.ts * 1000)}${m.bezug ? " · " + esc(nm(m.bezug)) : ""}</small><span>${esc(m.titel)}</span>`;
+    return m.link ? `<a class="meld" href="${esc(m.link)}" target="_blank" rel="noopener">${inner}</a>` : `<div class="meld">${inner}</div>`;}).join("")
+    + (ml.length > 6 ? `<button class="mehr" id="news-mehr">${newsAlle ? "Weniger anzeigen" : `Alle ${ml.length} Meldungen anzeigen`}</button>` : "");
+  const b = $("news-mehr"); if (b) b.onclick = () => {newsAlle = !newsAlle; renderNews();};
+}
 $("tabs").onclick = e => {const b = e.target.closest("[data-k]"); if (!b) return; tab = b.dataset.k; $("tabs").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); render();};
 $("rng").onclick = e => {const b = e.target.closest("[data-r]"); if (!b) return; rng = +b.dataset.r; $("rng").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); render();};
 meineLaden().then(() => {kurseLaden(); kurvenLaden();}); standLaden();
