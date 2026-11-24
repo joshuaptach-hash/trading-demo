@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  models: read
 
 concurrency:
   group: bot
@@ -45,7 +46,9 @@ jobs:
             echo "{}" > state.json
           fi
 
-      - name: Bot ausführen
+      - name: Bot ausführen (mit Nachrichten)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python bot/bot.py state.json meine_werte.json
 
       - name: Stand speichern (Branch daten)
