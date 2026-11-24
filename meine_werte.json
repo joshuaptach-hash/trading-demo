@@ -6,9 +6,27 @@
   "boerse": "NASDAQ"
  },
  {
-  "symbol": "TSLA",
-  "name": "Tesla, Inc.",
+  "symbol": "NVDA",
+  "name": "NVIDIA Corporation",
   "typ": "aktie",
   "boerse": "NASDAQ"
+ },
+ {
+  "symbol": "BTC",
+  "name": "Bitcoin",
+  "typ": "krypto",
+  "boerse": "Coinbase"
+ },
+ {
+  "symbol": "ETH",
+  "name": "Ether",
+  "typ": "krypto",
+  "boerse": "Coinbase"
+ },
+ {
+  "symbol": "XRP",
+  "name": "XRP",
+  "typ": "krypto",
+  "boerse": "Coinbase"
  }
 ]
