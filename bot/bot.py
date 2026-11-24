@@ -10,6 +10,7 @@ Position und schreibt den Stand zurück.
 """
 import json
 import sys
+import news as newsmodul
 import time
 import urllib.request
 from pathlib import Path
@@ -33,6 +34,10 @@ KLASSEN = {
     "etf": {"name": "ETFs", "hebel": 5, "trend": 0.4, "dip": 0.15, "stop_loss": 0.3, "take_profit": 0.6, "haltedauer_min": 180},
 }
 MEINE = set()  # Symbole aus meine_werte.json
+NEWS = {}      # Symbol -> {score, sicherheit, grund, ts} aus news.py
+NEWS_TRADE = 0.5      # ab diesem Betrag des News-Scores (und Sicherheit) wird direkt gehandelt
+NEWS_SICHER = 0.6
+NEWS_FILTER = 0.3     # Kurs-Regel nicht gegen klar gegenläufige News
 REGELN = {"startkapital": 1000.0, "einsatz": 150.0, "max_positionen": 4, "pause_nach_schliessen_min": 30,
           "gebuehr": 1.0, "schluss_vor_boersenende_min": 10, "klassen": KLASSEN}
 
@@ -182,6 +187,12 @@ def pruefen(st, m, jetzt):
                 fertig = True; break
         if fertig:
             continue
+        nw = NEWS.get(p["s"])
+        if nw and nw["ts"] > p["ts"] and nw["sicherheit"] >= NEWS_SICHER and (nw["score"] <= -NEWS_TRADE if not p["short"] else nw["score"] >= NEWS_TRADE) \
+                and (d["klasse"] == "krypto" or d["offen"]):
+            e = schliessen(st, p, d["preis"], f"Gegenläufige Nachricht: {nw['grund'][:80]}", jetzt)
+            meld.append(f"{name(p['s'])} wegen gegenläufiger Nachricht geschlossen: {eur(e)}.")
+            continue
         k = KLASSEN[d["klasse"]]
         if jetzt - p["ts"] > k["haltedauer_min"] * 60000:
             e = schliessen(st, p, d["preis"], "Haltedauer abgelaufen", jetzt)
@@ -209,16 +220,22 @@ def eroeffnen(st, m, jetzt):
             continue
         if d["klasse"] != "krypto" and (not d["offen"] or jetzt // 1000 > d["schluss"] - 30 * 60):
             continue
-        # Stärke relativ zur Schwelle der Klasse, damit Krypto Aktien nicht immer verdrängt
-        if d["tag"] > k["trend"] and d["h1"] < -k["dip"]:
-            kandidaten.append((abs(d["h1"]) / k["dip"] + d["tag"] / k["trend"] / 4, s, False))
-        elif d["tag"] < -k["trend"] and d["h1"] > k["dip"]:
-            kandidaten.append((d["h1"] / k["dip"] + abs(d["tag"]) / k["trend"] / 4, s, True))
+        nw = NEWS.get(s)
+        ns = nw["score"] if nw and nw["sicherheit"] >= NEWS_SICHER else 0.0
+        # 1. News-Trade: klare Nachricht schlägt alles (Priorität 10+)
+        if nw and nw["sicherheit"] >= NEWS_SICHER and abs(nw["score"]) >= NEWS_TRADE and jetzt - nw["ts"] < 60 * 60000:
+            kandidaten.append((10 + abs(nw["score"]) * nw["sicherheit"], s, nw["score"] < 0, "news"))
+            continue
+        # 2. Kurs-Regel (Rücksetzer im Trend), aber nicht gegen die Nachrichtenlage
+        if d["tag"] > k["trend"] and d["h1"] < -k["dip"] and ns > -NEWS_FILTER:
+            kandidaten.append((abs(d["h1"]) / k["dip"] + d["tag"] / k["trend"] / 4, s, False, "kurs"))
+        elif d["tag"] < -k["trend"] and d["h1"] > k["dip"] and ns < NEWS_FILTER:
+            kandidaten.append((d["h1"] / k["dip"] + abs(d["tag"]) / k["trend"] / 4, s, True, "kurs"))
     if not kandidaten:
         offene_boerse = any(d["offen"] for d in m.values() if d["klasse"] != "krypto")
         return ("Kein Wert erfüllt gerade die Regel. Ich warte auf einen Rücksetzer im Trend."
                 + ("" if offene_boerse else " Die Börse ist geschlossen, Aktien und ETFs handle ich erst wieder ab 9 Uhr."))
-    _, s, short = max(kandidaten)
+    _, s, short, art = max(kandidaten)
     d = m[s]
     k = KLASSEN[d["klasse"]]
     preis, h = d["preis"], k["hebel"]
@@ -230,6 +247,8 @@ def eroeffnen(st, m, jetzt):
     st["positionen"].append(p)
     zeitraum = "24 Std" if d["klasse"] == "krypto" else "heute"
     grund = f"{zeitraum} {pct(d['tag'])}, letzte Stunde {pct(d['h1'])}"
+    if art == "news":
+        grund = f"Nachricht: {NEWS[s]['grund']}"
     st["trades"].append({"ts": jetzt, "s": s, "aktion": "Eröffnet", "short": short, "hebel": h, "kurs": preis, "einsatz": R["einsatz"],
                          "betrag": R["einsatz"], "gebuehr": R["gebuehr"], "grund": grund})
     richtung = "Short (Wette auf fallende Kurse)" if short else "Long (Wette auf steigende Kurse)"
@@ -251,6 +270,10 @@ def main():
         if p["s"] not in WERTE:
             WERTE[p["s"]] = (p.get("name", p["s"]), p.get("klasse", "aktie"))
     m, fehler = marktdaten(jetzt)
+    try:
+        NEWS.update(newsmodul.aktualisieren(st, {s: WERTE[s] for s in m}, jetzt))
+    except Exception as e:
+        fehler.append(f"News: {e}")
     meld = pruefen(st, m, jetzt)
     info = eroeffnen(st, m, jetzt)
     gesamt = st["bargeld"] + sum(wert(p, m[p["s"]]["preis"]) if p["s"] in m else p["einsatz"] for p in st["positionen"])
