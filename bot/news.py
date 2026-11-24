@@ -28,7 +28,7 @@ FEEDS = {
 }
 MAX_ALTER_H = 6          # ältere Meldungen ignorieren
 KI_ABSTAND_MIN = 15      # höchstens alle 15 Minuten die KI fragen (Freikontingent)
-KI_MODELL = os.environ.get("KI_MODELL") or "claude-opus-5-5"
+KI_MODELL = os.environ.get("KI_MODELL") or "claude-haiku-5-5"
 
 POS = r"\b(beat|beats|surge|surges|soar|soars|jump|jumps|rall(y|ies)|record|upgrade|upgraded|raises? guidance|strong demand|approval|approved|buyback|profit rises|rekord|steigt|gewinnsprung|übertrifft|hochgestuft)\b"
 NEG = r"\b(falls?|drops?|slides?|sinks?|declines?|down \d|miss|misses|plunge|plunges|slump|slumps|tumble|tumbles|crash|downgrade|downgraded|cuts? guidance|lawsuit|probe|investigation|recall|fraud|hack|hacked|bankrupt|layoffs?|sanction|ban|warns?|sinkt|einbruch|verlust|herabgestuft|klage|ermittlung)\b"
