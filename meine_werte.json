@@ -4,5 +4,11 @@
   "name": "Apple Inc.",
   "typ": "aktie",
   "boerse": "NASDAQ"
+ },
+ {
+  "symbol": "TSLA",
+  "name": "Tesla, Inc.",
+  "typ": "aktie",
+  "boerse": "NASDAQ"
  }
 ]
