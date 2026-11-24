@@ -132,7 +132,9 @@ def aktualisieren(st, werte, jetzt):
     bekannt = set(alt.get("gelesen", []))
     neue = [m for m in meldungen if m["id"] not in bekannt]
     news = {**alt, "meldungen": meldungen[:40], "stand": jetzt}
-    if neue and jetzt - alt.get("bewertet", 0) >= KI_ABSTAND_MIN * 60000:
+    ki_zuletzt_ok = alt.get("quelle", "").startswith("KI")
+    faellig = jetzt - alt.get("bewertet", 0) >= KI_ABSTAND_MIN * 60000 or not ki_zuletzt_ok
+    if (neue or not ki_zuletzt_ok) and faellig:
         erg = ki_bewerten(meldungen[:60], werte)
         quelle = "KI (GitHub Models)" if erg else "Wortliste"
         erg = erg or wortliste(meldungen, werte)
