@@ -4,8 +4,8 @@ Quellen (kostenlos, ohne Konto):
   Welt und Wirtschaft: BBC World, BBC Business, Tagesschau, CNBC Top News
   Krypto: CoinDesk
   Je beobachtetem Wert: Yahoo Finance (Meldungen zum Kürzel)
-Bewertung: eine KI über GitHub Models (kostenlos mit dem GITHUB_TOKEN der Action) liest alle
-neuen Schlagzeilen auf einmal und gibt je betroffenem Wert einen Wert von -1 (sehr negativ)
+Bewertung: Claude (Anthropic-API, Schlüssel als GitHub-Secret ANTHROPIC_API_KEY, Modell über
+KI_MODELL einstellbar) liest alle neuen Schlagzeilen auf einmal und gibt je betroffenem Wert einen Wert von -1 (sehr negativ)
 bis +1 (sehr positiv), eine Sicherheit und einen kurzen Grund zurück. Ohne KI greift eine
 einfache Wortliste. Ergebnis landet in state["news"].
 """
@@ -15,6 +15,7 @@ import os
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 
@@ -27,8 +28,7 @@ FEEDS = {
 }
 MAX_ALTER_H = 6          # ältere Meldungen ignorieren
 KI_ABSTAND_MIN = 15      # höchstens alle 15 Minuten die KI fragen (Freikontingent)
-KI_MODELL = "openai/gpt-4.1-mini"
-KI_URL = "https://models.github.ai/inference/chat/completions"
+KI_MODELL = os.environ.get("KI_MODELL") or "claude-opus-5-5"
 
 POS = r"\b(beat|beats|surge|surges|soar|soars|jump|jumps|rall(y|ies)|record|upgrade|upgraded|raises? guidance|strong demand|approval|approved|buyback|profit rises|rekord|steigt|gewinnsprung|übertrifft|hochgestuft)\b"
 NEG = r"\b(falls?|drops?|slides?|sinks?|declines?|down \d|miss|misses|plunge|plunges|slump|slumps|tumble|tumbles|crash|downgrade|downgraded|cuts? guidance|lawsuit|probe|investigation|recall|fraud|hack|hacked|bankrupt|layoffs?|sanction|ban|warns?|sinkt|einbruch|verlust|herabgestuft|klage|ermittlung)\b"
@@ -74,37 +74,77 @@ def schlagzeilen(werte, jetzt_s):
     return sorted(out, key=lambda x: -x["ts"])
 
 
+SCHEMA = {
+    "type": "object",
+    "properties": {
+        "stimmung": {"type": "number"},
+        "stimmung_grund": {"type": "string"},
+        "werte": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string"},
+                "score": {"type": "number"},
+                "sicherheit": {"type": "number"},
+                "grund": {"type": "string"},
+                "meldungen": {"type": "array", "items": {"type": "integer"}},
+            },
+            "required": ["symbol", "score", "sicherheit", "grund", "meldungen"],
+            "additionalProperties": False,
+        }},
+    },
+    "required": ["stimmung", "stimmung_grund", "werte"],
+    "additionalProperties": False,
+}
+
+
 def ki_bewerten(meldungen, werte):
-    token = os.environ.get("GITHUB_TOKEN")
-    if not token or not meldungen:
+    """Claude bewertet die Schlagzeilen. Braucht ANTHROPIC_API_KEY (GitHub-Secret), sonst None."""
+    if not os.environ.get("ANTHROPIC_API_KEY") or not meldungen:
+        return None
+    try:
+        import anthropic
+    except ImportError:
+        print("KI: Paket anthropic fehlt")
         return None
     liste = "\n".join(f"{i}. [{m['quelle']}{', zu ' + m['bezug'] if m['bezug'] else ''}] {m['titel']}" for i, m in enumerate(meldungen[:60]))
     werte_txt = ", ".join(f"{s} ({n})" for s, (n, _) in werte.items())
     prompt = (
-        "Du bist ein vorsichtiger Analyst für einen Demo-Trading-Bot mit Spielgeld. Bewerte die Schlagzeilen danach, "
-        "wie sie den Kurs der folgenden Werte in den nächsten Stunden beeinflussen könnten.\n"
+        "Du bewertest Schlagzeilen für einen Demo-Trading-Bot, der mit Spielgeld handelt. Schätze ein, wie die Meldungen "
+        "den Kurs der folgenden Werte in den nächsten Stunden beeinflussen.\n"
         f"Werte: {werte_txt}\n\nSchlagzeilen:\n{liste}\n\n"
-        "Regeln: Nur Werte nennen, die von mindestens einer Schlagzeile direkt oder klar indirekt betroffen sind "
-        "(Weltnachrichten wie Zinsen, Kriege, Zölle wirken auf Indizes, ETFs und Krypto). Bereits bekannte, "
-        "eingepreiste Nachrichten schwächer gewichten. Antworte NUR mit JSON in genau dieser Form:\n"
-        '{"stimmung": Zahl -1 bis 1 (allgemeine Marktstimmung), "stimmung_grund": "ein kurzer Satz auf Deutsch", '
-        '"werte": [{"symbol": "AAPL", "score": Zahl -1 bis 1, "sicherheit": Zahl 0 bis 1, '
-        '"grund": "ein kurzer Satz auf Deutsch", "meldungen": [Nummern der Schlagzeilen]}]}'
+        "Nenne nur Werte, die von mindestens einer Schlagzeile direkt oder klar indirekt betroffen sind (Weltnachrichten wie "
+        "Zinsen, Kriege oder Zölle wirken auf Indizes, ETFs und Krypto). Bekannte, schon eingepreiste Nachrichten gewichtest "
+        "du schwächer. score von -1 (sehr negativ) bis 1 (sehr positiv), sicherheit von 0 bis 1, grund ein kurzer Satz auf "
+        "Deutsch, meldungen die Nummern der Schlagzeilen. stimmung ist die allgemeine Marktstimmung von -1 bis 1."
     )
-    body = json.dumps({"model": KI_MODELL, "temperature": 0.2, "response_format": {"type": "json_object"},
-                       "messages": [{"role": "user", "content": prompt}]}).encode()
-    roh = b""
     try:
-        roh = holen(KI_URL, body, {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
-                                    "Accept": "application/json", "X-GitHub-Api-Version": "2022-11-28"}, zeit=60)
-        r = json.loads(roh)
-        txt = r["choices"][0]["message"]["content"]
-        return json.loads(txt[txt.find("{"): txt.rfind("}") + 1])
-    except urllib.error.HTTPError as e:
-        print("KI nicht erreichbar: HTTP", e.code, e.read()[:300])
+        client = anthropic.Anthropic(max_retries=2, timeout=90.0)
+        r = client.messages.create(
+            model=KI_MODELL,
+            max_tokens=4000,
+            output_config={"effort": "low", "format": {"type": "json_schema", "schema": SCHEMA}},
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except anthropic.AuthenticationError:
+        print("KI: API-Schlüssel ungültig")
         return None
-    except Exception as e:
-        print("KI nicht erreichbar:", str(e)[:120], "| Antwort:", roh[:300])
+    except anthropic.RateLimitError:
+        print("KI: Limit erreicht, später erneut")
+        return None
+    except anthropic.APIStatusError as e:
+        print("KI-Fehler", e.status_code, str(e.message)[:200])
+        return None
+    except anthropic.APIConnectionError:
+        print("KI: keine Verbindung")
+        return None
+    if r.stop_reason != "end_turn":
+        print("KI: unvollständige Antwort,", r.stop_reason)
+        return None
+    text = next((b.text for b in r.content if b.type == "text"), "")
+    try:
+        return json.loads(text)
+    except ValueError:
+        print("KI: Antwort kein JSON")
         return None
 
 
@@ -136,7 +176,7 @@ def aktualisieren(st, werte, jetzt):
     faellig = jetzt - alt.get("bewertet", 0) >= KI_ABSTAND_MIN * 60000 or not ki_zuletzt_ok
     if (neue or not ki_zuletzt_ok) and faellig:
         erg = ki_bewerten(meldungen[:60], werte)
-        quelle = "KI (GitHub Models)" if erg else "Wortliste"
+        quelle = f"KI ({KI_MODELL})" if erg else "Wortliste"
         erg = erg or wortliste(meldungen, werte)
         sig = {}
         for w in erg.get("werte", []):
