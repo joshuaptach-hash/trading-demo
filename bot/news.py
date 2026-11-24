@@ -14,6 +14,7 @@ import json
 import os
 import re
 import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 
@@ -92,13 +93,18 @@ def ki_bewerten(meldungen, werte):
     )
     body = json.dumps({"model": KI_MODELL, "temperature": 0.2, "response_format": {"type": "json_object"},
                        "messages": [{"role": "user", "content": prompt}]}).encode()
+    roh = b""
     try:
-        r = json.loads(holen(KI_URL, body, {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
-                                             "Accept": "application/json"}, zeit=60))
+        roh = holen(KI_URL, body, {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                                    "Accept": "application/json", "X-GitHub-Api-Version": "2022-11-28"}, zeit=60)
+        r = json.loads(roh)
         txt = r["choices"][0]["message"]["content"]
         return json.loads(txt[txt.find("{"): txt.rfind("}") + 1])
+    except urllib.error.HTTPError as e:
+        print("KI nicht erreichbar: HTTP", e.code, e.read()[:300])
+        return None
     except Exception as e:
-        print("KI nicht erreichbar:", str(e)[:120])
+        print("KI nicht erreichbar:", str(e)[:120], "| Antwort:", roh[:300])
         return None
 
 
